@@ -53,16 +53,37 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+function safeUrl(url) {
+  const value = url.trim();
+  if (/^(https?:\/\/|mailto:|#|\/|\.\/|\.\.\/)/i.test(value)) return value;
+  return '#';
+}
+
 function inline(text) {
-  return text
-    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">')
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/_([^_]+)_/g, '<em>$1</em>')
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  const saved = [];
+
+  const emphasis = (value) =>
+    value
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/_([^_]+)_/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+  let output = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, src) => {
+    saved.push(`<img alt="${alt}" src="${safeUrl(src)}">`);
+    return `\u0000L${saved.length - 1}\u0000`;
+  });
+
+  output = output.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, href) => {
+    saved.push(`<a href="${safeUrl(href)}" target="_blank" rel="noopener">${emphasis(label)}</a>`);
+    return `\u0000L${saved.length - 1}\u0000`;
+  });
+
+  output = emphasis(output);
+
+  return output.replace(/\u0000L(\d+)\u0000/g, (match, index) => saved[Number(index)]);
 }
 
 function renderMarkdown(source) {
@@ -207,6 +228,26 @@ function prefixLines(prefix) {
   save();
 }
 
+function prefixOrderedList() {
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const value = editor.value;
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd = value.indexOf('\n', end) === -1 ? value.length : value.indexOf('\n', end);
+  const block = value.slice(lineStart, lineEnd);
+  const updated = block
+    .split('\n')
+    .map((line, i) => `${i + 1}. ${line}`)
+    .join('\n');
+
+  editor.value = value.slice(0, lineStart) + updated + value.slice(lineEnd);
+  editor.focus();
+  editor.selectionStart = lineStart;
+  editor.selectionEnd = lineStart + updated.length;
+  updatePreview();
+  save();
+}
+
 const SYNTAX = {
   bold: () => wrapSelection('**', '**'),
   italic: () => wrapSelection('*', '*'),
@@ -218,7 +259,7 @@ const SYNTAX = {
   h2: () => prefixLines('## '),
   h3: () => prefixLines('### '),
   ul: () => prefixLines('- '),
-  ol: () => prefixLines('1. '),
+  ol: () => prefixOrderedList(),
   quote: () => prefixLines('> '),
   hr: () => {
     const pos = editor.selectionStart;
